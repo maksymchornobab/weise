@@ -1,5 +1,4 @@
 
-pub mod garlic;
 use libp2p::{
     futures::StreamExt,
     identity, noise, tcp, yamux,
