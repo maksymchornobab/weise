@@ -9,7 +9,7 @@ use std::error::Error;
 use std::time::Duration;
 use rand::Rng;
 
-const PACKET_SIZE: usize = 512;
+const PACKET_SIZE: usize = 4096;
 
 #[derive(NetworkBehaviour)]
 pub struct MyBehaviour {
