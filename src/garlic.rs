@@ -51,7 +51,7 @@ impl WeiseTransport {
 
         // 2. Збираємо зубчики в одну велику головку часнику (пакет на 4096 байт)
         let cloves = vec![clove]; 
-        let garlic_packet = GarlicPacket::build(cloves, 4096);
+        let garlic_packet = GarlicPacket::build(cloves, 4080);
 
         // 3. Серіалізуємо часниковий пакет в JSON-рядок
         let garlic_json = serde_json::to_string(&garlic_packet)?;
