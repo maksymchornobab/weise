@@ -23,6 +23,12 @@ pub struct WeiseTransport {
     pub local_peer_id: libp2p::PeerId,
 }
 
+// 1. Кажемо компілятору змонтувати файл garlic.rs як модуль
+pub mod garlic;
+
+// 2. Робимо структури з нього доступними ззовні (re-export)
+pub use garlic::{GarlicPacket, GarlicClove};
+
 impl WeiseTransport {
     /// Ініціалізує захищений стелс-транспорт
     pub fn new() -> Result<Self, Box<dyn Error>> {
