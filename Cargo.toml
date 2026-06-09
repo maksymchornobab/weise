@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-libp2p = { version = "0.53", features = ["tcp", "quic", "noise", "yamux", "kad", "identify", "macros", "tokio", "ping", "gossipsub"] }
+libp2p = { version = "0.53", features = ["tcp", "tls", "quic", "noise", "yamux", "kad", "identify", "macros", "mdns", "tokio", "ping", "gossipsub", "autonat", "dcutr" ] }
 # Змінюємо "io-stdin" на "io-std"
 tokio = { version = "1.0", features = ["full"] } 
 futures = "0.3"

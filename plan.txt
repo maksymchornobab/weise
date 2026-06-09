@@ -1,0 +1,119 @@
+Для того щоб вивести твій транспорт `WeiseTransport` у відкритий інтернет без сторонніх серверів, нам потрібно перебудувати архітектуру мережевого рушія в `libp2p`. Плюс у тому, що `libp2p` має готові блоки для обох технологій.
+
+Оскільки зараз твій транспорт працює на чистому TCP, першим і головним архітектурним кроком стане **додавання QUIC (UDP)**, тому що класичний Hole Punching (пробиття NAT) технічно неможливий без UDP-пакетів.
+
+Ось покроковий інженерний план інтеграції Kademlia DHT та Автоматичного пробиття NAT (DCUtR + AutoNAT) у твій поточний проект.
+
+---
+
+### 📋 Етап 1: Оновлення залежностей (`Cargo.toml`)
+
+Тобі знадобляться додаткові модулі `libp2p`. Перевір, щоб у твоїх залежностях були увімкнені наступні фічі:
+
+```toml
+[dependencies]
+# Переконайся, що у libp2p увімкнені модулі для kad, quic, autonat та dcutr
+libp2p = { version = "0.53", features = ["tcp", "tls", "noise", "gossipsub", "mdns", "macros", "tokio", "kad", "quic", "autonat", "dcutr"] }
+
+```
+
+---
+
+### 🔀 Етап 2: Модернізація мережевого стеку (QUIC + TCP)
+
+Зараз твій транспорт ініціалізується суто через TCP. Тобі потрібно зробити його **гібридним** (можливість слухати і TCP, і QUIC поверх UDP).
+
+1. У коді ініціалізації `Swarm` заміни чистий TCP-транспорт на комбінований:
+
+```rust
+let transport = libp2p::tokio::new_development_transport(keypair.clone())?;
+// Або краще явно зібрати QUIC + TCP:
+let transport = libp2p::quic::tokio::Transport::new(libp2p::quic::Config::new(&keypair))
+    .or_transport(libp2p::tcp::tokio::Transport::new(libp2p::tcp::Config::default()))
+    .upgrade(libp2p::core::upgrade::Version::V1)
+    .authenticate(libp2p::noise::Config::new(&keypair)?)
+    .multiplex(libp2p::yamux::Config::default())
+    .boxed();
+
+```
+
+2. Зміни логіку команди `listen_on`. Тепер твоя нода має одночасно слухати і TCP порт, і UDP порт для QUIC:
+
+```rust
+swarm.listen_on("/ip4/0.0.0.0/tcp/49152".parse()?)?;
+swarm.listen_on("/ip4/0.0.0.0/udp/49152/quic-v1".parse()?)?; // Саме сюди буде бити Hole Punching
+
+```
+
+---
+
+### 🧠 Етап 3: Створення Комбінованої Поведінки Mережі (`NetworkBehaviour`)
+
+Зараз твоя структура поведінки (наприклад, `WeiseBehaviour`) включає лише `Gossipsub` та, можливо, `Mdns`. Тобі потрібно розширити її, об'єднавши всі 4 необхідні інструменти.
+
+Додай у свою структуру нові поля:
+
+```rust
+#[derive(NetworkBehaviour)]
+pub struct WeiseBehaviour {
+    pub gossipsub: libp2p::gossipsub::Behaviour,
+    pub mdns: libp2p::mdns::tokio::Behaviour,     // Для локального тесту на твоїх Mac/Windows
+    pub kademlia: libp2p::kad::Behaviour<libp2p::kad::store::MemoryStore>, // Мапа мережі
+    pub autonat: libp2p::autonat::Behaviour,       // Визначає, чи ми за роутером
+    pub dcutr: libp2p::dcutr::Behaviour,           // Сам таран для пробиття роутера
+}
+
+```
+
+---
+
+### 🔍 Етап 4: Налаштування та запуск Kademlia DHT
+
+Під час створення `WeiseBehaviour` у функції `main.rs` потрібно правильно запустити сховище Kademlia:
+
+1. **Ініціалізація пам'яті:**
+
+```rust
+let local_peer_id = keypair.public().to_peer_id();
+let store = libp2p::kad::store::MemoryStore::new(local_peer_id);
+let kademlia = libp2p::kad::Behaviour::new(local_peer_id, store);
+
+```
+
+2. **Логіка обробки подій Kademlia (у твоєму циклі `loop { swarm.select() }`):**
+Тобі потрібно додати обробник подій для `WeiseBehaviourEvent::Kademlia`. Коли твоя нода дізнається про нову транзитну адресу або успішно знаходить когось через XOR-пошук, Kademlia має логувати це в консоль:
+
+```rust
+match event {
+    WeiseBehaviourEvent::Kademlia(libp2p::kad::Event::RoutingUpdated { peer, .. }) => {
+        println!("[🌌 KADEMLIA DHT] Оновлено маршрут для піра: {:?}", peer);
+    }
+    _ => {}
+}
+
+```
+
+---
+
+### 🛡️ Етап 5: Обробка тактів та запуск Hole Punching (DCUtR)
+
+Протокол `DCUtR` працює автоматично, якщо він увімкнений в обох нод в одному Swarm. Проте йому потрібен тригер.
+
+1. **Логіка підключення без серверів:**
+Оскільки сторонніх Bootstrap-серверів немає, для старту Bug Bounty ти роздрукуєш у консоль свій **QUIC Multiaddr**. Він виглядатиме так:
+`/ip4/ТВІЙ_ЗОВНІШНІЙ_IP/udp/49152/quic-v1/p2p/ТВІЙ_PEER_ID`
+2. Хакер або твій другий комп'ютер бере цей рядок і виконує команду підключення.
+3. **Що відбувається під капотом:**
+* `AutoNAT` твоєї ноди каже: *"О, я бачу, що до мене стукають, але мій роутер закритий"*.
+* `AutoNAT` ноди хакера каже: *"Я теж за NAT"*.
+* Модуль `DCUtR` обох нод перехоплює цю ініціативу і запускає ітеративний обмін спец-пакетами. Вони синхронізують свої внутрішні таймери і починають одночасно «бомбардувати» UDP-порти один одного. Роутери вважають це початком сесії, відкривають шлюзи, і Kademlia DHT фіксує успішне з'єднання (Direct Connection Established).
+
+
+
+---
+
+### 📈 Наступний крок
+
+Цей план повністю зберігає твою поточну логіку анонімних транзакцій, кільцевих підписів та 10-секундних тактів, але повністю міняє "рейки", по яких ходять пакети.
+
+Хочеш, щоб ми зараз разом написали оновлену структуру `WeiseBehaviour` та код ініціалізації для `main.rs`, який об'єднає QUIC, Kademlia DHT та DCUtR?

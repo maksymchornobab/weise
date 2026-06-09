@@ -1,10 +1,13 @@
-
 use libp2p::{
     futures::StreamExt,
     identity, noise, tcp, yamux,
     swarm::{SwarmEvent, NetworkBehaviour, Swarm},
     SwarmBuilder, Multiaddr, gossipsub,
 };
+
+use libp2p::kad::{Behaviour as KadBehaviour, store::MemoryStore};
+use libp2p::autonat::Behaviour as AutoNatBehaviour;
+use libp2p::dcutr::Behaviour as DcutrBehaviour;
 use std::error::Error;
 use std::time::Duration;
 use rand::Rng;
@@ -15,6 +18,10 @@ const PACKET_SIZE: usize = 8192;
 pub struct MyBehaviour {
     pub gossipsub: gossipsub::Behaviour,
     pub ping: libp2p::ping::Behaviour,
+    pub kademlia: KadBehaviour<MemoryStore>,
+    pub autonat: AutoNatBehaviour,
+    pub dcutr: DcutrBehaviour,
+    pub mdns: libp2p::mdns::tokio::Behaviour,
 }
 
 pub struct WeiseTransport {
@@ -23,14 +30,12 @@ pub struct WeiseTransport {
     pub local_peer_id: libp2p::PeerId,
 }
 
-// 1. Кажемо компілятору змонтувати файл garlic.rs як модуль
 pub mod garlic;
 
-// 2. Робимо структури з нього доступними ззовні (re-export)
 pub use garlic::{GarlicPacket, GarlicClove};
 
 impl WeiseTransport {
-    /// Ініціалізує захищений стелс-транспорт
+
     pub fn new() -> Result<Self, Box<dyn Error>> {
         let id_keys = identity::Keypair::generate_ed25519();
         let local_peer_id = identity::PeerId::from_public_key(&id_keys.public());
@@ -42,22 +47,51 @@ impl WeiseTransport {
 
         let mut swarm = SwarmBuilder::with_existing_identity(id_keys)
             .with_tokio()
+            // 🔄 ЗМІНА: Додаємо підтримку QUIC (UDP) паралельно з TCP для пробиття NAT
             .with_tcp(tcp::Config::default(), noise::Config::new, yamux::Config::default)?
+            .with_quic() 
             .with_behaviour(|key| {
                 let message_authenticity = gossipsub::MessageAuthenticity::Signed(key.clone());
                 let gossipsub = gossipsub::Behaviour::new(message_authenticity, gossipsub_config).unwrap();
-                MyBehaviour { gossipsub, ping: libp2p::ping::Behaviour::default() }
+                
+                // 🧠 Ініціалізуємо Kademlia DHT зі сховищем у RAM пам'яті
+                let peer_id = key.public().to_peer_id();
+                let store = MemoryStore::new(peer_id);
+                let kademlia = KadBehaviour::new(peer_id, store);
+
+                // 📡 Ініціалізуємо AutoNAT (визначення типу NAT за роутером)
+                let autonat = AutoNatBehaviour::new(peer_id, libp2p::autonat::Config::default());
+
+                // ⚡ Ініціалізуємо DCUtR (рушій автоматичного пробиття дірок у роутері)
+                let dcutr = DcutrBehaviour::new(peer_id);
+
+                // 🌐 Ініціалізуємо mDNS для локального пошуку Mac/Windows в одній мережі
+                let mdns = libp2p::mdns::tokio::Behaviour::new(
+                    libp2p::mdns::Config::default(), 
+                    peer_id
+                ).unwrap();
+
+                // ✨ Повертаємо повністю укомплектовану структуру без пропущених полів
+                MyBehaviour { 
+                    gossipsub, 
+                    ping: libp2p::ping::Behaviour::default(),
+                    kademlia,
+                    autonat,
+                    dcutr,
+                    mdns,
+                }
             })?
             .build();
 
         let topic = gossipsub::IdentTopic::new("weise-l1-chat");
         swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
-        swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
+        
+        // Видаляємо звідси фіксований listen_on, бо тепер ми динамічно керуємо 
+        // портами TCP та UDP (QUIC) прямо у твоєму файлі main.rs
 
         Ok(Self { swarm, topic, local_peer_id })
     }
 
-    /// Публічний метод для відправки повідомлень з авто-пакуванням у стелс-пакет
     pub fn send_secure(&mut self, text: &str) -> Result<(), Box<dyn Error>> {
         let mut payload = text.as_bytes().to_vec();
         if payload.len() > PACKET_SIZE - 2 {
@@ -79,12 +113,10 @@ impl WeiseTransport {
         Ok(())
     }
 
-    /// Публічний метод для генерації фонового шуму (Chaffing)
     pub fn send_noise(&mut self) -> Result<(), Box<dyn Error>> {
         self.send_secure("")
     }
 
-    /// Допоміжний метод для парсингу сирих байтів
     pub fn unpack(data: &[u8]) -> Option<String> {
         if data.len() < 2 { return None; }
         let len = u16::from_be_bytes([data[0], data[1]]) as usize;
