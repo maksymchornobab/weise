@@ -4,8 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-libp2p = { version = "0.53", features = ["tcp", "tls", "quic", "noise", "yamux", "kad", "identify", "macros", "mdns", "tokio", "ping", "gossipsub", "autonat", "dcutr" ] }
+libp2p = { version = "0.53", features = ["tcp", "tls", "quic", "noise", "yamux", "kad", "identify", "macros", "mdns", "tokio", "ping", "gossipsub", "autonat", "dcutr", "upnp" ] }
 # Змінюємо "io-stdin" на "io-std"
+libp2p-upnp = { version = "*", features = ["tokio"] }
 tokio = { version = "1.0", features = ["full"] } 
 futures = "0.3"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

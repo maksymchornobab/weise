@@ -3332,6 +3332,7 @@ version = "0.1.0"
 dependencies = [
  "futures",
  "libp2p",
+ "libp2p-upnp",
  "rand 0.8.6",
  "serde",
  "serde_json",

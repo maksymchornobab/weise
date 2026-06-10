@@ -8,6 +8,8 @@ use libp2p::{
 use libp2p::kad::{Behaviour as KadBehaviour, store::MemoryStore};
 use libp2p::autonat::Behaviour as AutoNatBehaviour;
 use libp2p::dcutr::Behaviour as DcutrBehaviour;
+// 💥 Імпортуємо вбудований UPnP з правильного внутрішнього шляху вашої версії libp2p
+use libp2p::upnp::tokio::Behaviour as UpnpBehaviour; 
 use std::error::Error;
 use std::time::Duration;
 use rand::Rng;
@@ -22,6 +24,8 @@ pub struct MyBehaviour {
     pub autonat: AutoNatBehaviour,
     pub dcutr: DcutrBehaviour,
     pub mdns: libp2p::mdns::tokio::Behaviour,
+    // 🔥 Використовуємо вбудований тип
+    pub upnp: UpnpBehaviour,
 }
 
 pub struct WeiseTransport {
@@ -33,6 +37,7 @@ pub struct WeiseTransport {
 pub mod garlic;
 
 pub use garlic::{GarlicPacket, GarlicClove};
+pub use libp2p_upnp as upnp;
 
 impl WeiseTransport {
 
@@ -47,31 +52,26 @@ impl WeiseTransport {
 
         let mut swarm = SwarmBuilder::with_existing_identity(id_keys)
             .with_tokio()
-            // 🔄 ЗМІНА: Додаємо підтримку QUIC (UDP) паралельно з TCP для пробиття NAT
             .with_tcp(tcp::Config::default(), noise::Config::new, yamux::Config::default)?
             .with_quic() 
             .with_behaviour(|key| {
                 let message_authenticity = gossipsub::MessageAuthenticity::Signed(key.clone());
                 let gossipsub = gossipsub::Behaviour::new(message_authenticity, gossipsub_config).unwrap();
                 
-                // 🧠 Ініціалізуємо Kademlia DHT зі сховищем у RAM пам'яті
                 let peer_id = key.public().to_peer_id();
                 let store = MemoryStore::new(peer_id);
                 let kademlia = KadBehaviour::new(peer_id, store);
-
-                // 📡 Ініціалізуємо AutoNAT (визначення типу NAT за роутером)
                 let autonat = AutoNatBehaviour::new(peer_id, libp2p::autonat::Config::default());
-
-                // ⚡ Ініціалізуємо DCUtR (рушій автоматичного пробиття дірок у роутері)
                 let dcutr = DcutrBehaviour::new(peer_id);
-
-                // 🌐 Ініціалізуємо mDNS для локального пошуку Mac/Windows в одній мережі
+                
                 let mdns = libp2p::mdns::tokio::Behaviour::new(
                     libp2p::mdns::Config::default(), 
                     peer_id
                 ).unwrap();
 
-                // ✨ Повертаємо повністю укомплектовану структуру без пропущених полів
+                // 🔥 Вбудований UPnP ініціалізується просто через default() без передачі PeerId
+                let upnp = UpnpBehaviour::default();
+
                 MyBehaviour { 
                     gossipsub, 
                     ping: libp2p::ping::Behaviour::default(),
@@ -79,6 +79,7 @@ impl WeiseTransport {
                     autonat,
                     dcutr,
                     mdns,
+                    upnp, 
                 }
             })?
             .build();
@@ -86,9 +87,6 @@ impl WeiseTransport {
         let topic = gossipsub::IdentTopic::new("weise-l1-chat");
         swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
         
-        // Видаляємо звідси фіксований listen_on, бо тепер ми динамічно керуємо 
-        // портами TCP та UDP (QUIC) прямо у твоєму файлі main.rs
-
         Ok(Self { swarm, topic, local_peer_id })
     }
 
