@@ -23,7 +23,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("[⚡ QUIC ONLINE] Відкрито UDP порт для Hole Punching (QUIC)");
 
     let mut stdin = io::BufReader::new(io::stdin()).lines();
-    let mut noise_timer = tokio::time::interval(Duration::from_secs(20));
+    let mut noise_timer = tokio::time::interval(Duration::from_secs(10));
+
+    
 
     loop {
         tokio::select! {
