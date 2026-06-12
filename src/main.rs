@@ -25,12 +25,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut stdin = io::BufReader::new(io::stdin()).lines();
     let mut noise_timer = tokio::time::interval(Duration::from_secs(10));
 
-    // 🔥 ПІДКЛЮЧЕННЯ ДО ГЛОБАЛЬНОЇ ТОЧКИ ЗУСТРІЧІ (BOOTSTRAP)
-    let bootstrap_str = "/ip4/147.75.109.213/udp/4001/quic-v1/p2p/QmNnooDu7bfj99oddSg1Z1Yu1v5gREeXgW36RUpw3eaYXY";
+
+    let bootstrap_str = "/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2m2MXZ6896wgghvTQtR68me9saCYD689JWq2";
     if let Ok(bootstrap_addr) = bootstrap_str.parse::<libp2p::Multiaddr>() {
-        println!("[🌐 GLOBAL] Стукаємо в глобальний шлюз для обходу NAT...");
+        println!("[🌐 GLOBAL] Підключаємось до глобального TCP шлюзу для обходу NAT...");
         if let Some(libp2p::multiaddr::Protocol::P2p(bootstrap_peer_id)) = bootstrap_addr.iter().last() {
-            // Додаємо в Kademlia, щоб ноди знали, де шукати одна одну
             transport.swarm.behaviour_mut().kademlia.add_address(&bootstrap_peer_id, bootstrap_addr.clone());
             let _ = transport.swarm.dial(bootstrap_addr);
         }

@@ -8,8 +8,6 @@ use libp2p::{
 use libp2p::kad::{Behaviour as KadBehaviour, store::MemoryStore};
 use libp2p::autonat::Behaviour as AutoNatBehaviour;
 use libp2p::dcutr::Behaviour as DcutrBehaviour;
-// 💥 Імпортуємо вбудований UPnP з правильного внутрішнього шляху вашої версії libp2p
-use libp2p::upnp::tokio::Behaviour as UpnpBehaviour; 
 use std::error::Error;
 use std::time::Duration;
 use rand::Rng;
@@ -24,8 +22,6 @@ pub struct MyBehaviour {
     pub autonat: AutoNatBehaviour,
     pub dcutr: DcutrBehaviour,
     pub mdns: libp2p::mdns::tokio::Behaviour,
-    // 🔥 Використовуємо вбудований тип
-    pub upnp: UpnpBehaviour,
 }
 
 pub struct WeiseTransport {
@@ -37,7 +33,6 @@ pub struct WeiseTransport {
 pub mod garlic;
 
 pub use garlic::{GarlicPacket, GarlicClove};
-pub use libp2p_upnp as upnp;
 
 impl WeiseTransport {
 
@@ -52,6 +47,7 @@ impl WeiseTransport {
 
         let mut swarm = SwarmBuilder::with_existing_identity(id_keys)
             .with_tokio()
+            // Надійна пара: TCP + QUIC (UDP) для пробиття будь-яких мереж
             .with_tcp(tcp::Config::default(), noise::Config::new, yamux::Config::default)?
             .with_quic() 
             .with_behaviour(|key| {
@@ -69,9 +65,6 @@ impl WeiseTransport {
                     peer_id
                 ).unwrap();
 
-                // 🔥 Вбудований UPnP ініціалізується просто через default() без передачі PeerId
-                let upnp = UpnpBehaviour::default();
-
                 MyBehaviour { 
                     gossipsub, 
                     ping: libp2p::ping::Behaviour::default(),
@@ -79,7 +72,6 @@ impl WeiseTransport {
                     autonat,
                     dcutr,
                     mdns,
-                    upnp, 
                 }
             })?
             .build();
