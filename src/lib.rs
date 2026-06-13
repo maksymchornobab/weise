@@ -2,7 +2,7 @@ use libp2p::{
     futures::StreamExt,
     identity, noise, tcp, yamux,
     swarm::{SwarmEvent, NetworkBehaviour, Swarm},
-    SwarmBuilder, Multiaddr, gossipsub,
+    SwarmBuilder, Multiaddr, gossipsub, Transport
 };
 
 use libp2p::kad::{Behaviour as KadBehaviour, store::MemoryStore};
@@ -45,11 +45,23 @@ impl WeiseTransport {
             .validation_mode(gossipsub::ValidationMode::Strict) 
             .build()?;
 
+        // 1. Створюємо чистий низькорівневий TCP-транспорт
+        let raw_tcp = tcp::tokio::Transport::new(tcp::Config::default());
+        
+        // 2. Огортаємо його в DNS-резолвер, щоб нода розуміла домени (наприклад, bootstrap.libp2p.io)
+        let dns_transport = libp2p::dns::tokio::Transport::system(raw_tcp)?;
+        
+        // 3. Накочуємо обов'язкові шари: шифрування (Noise) та мультиплексування (Yamux)
+        // Це саме те, що розв'язує помилку невідповідності типів (type mismatch)
+        let upgraded_transport = dns_transport
+            .upgrade(libp2p::core::upgrade::Version::V1)
+            .authenticate(noise::Config::new(&id_keys)?)
+            .multiplex(yamux::Config::default());
+
+        // 4. Передаємо готовий стек у SwarmBuilder
         let mut swarm = SwarmBuilder::with_existing_identity(id_keys)
             .with_tokio()
-            // Надійна пара: TCP + QUIC (UDP) для пробиття будь-яких мереж
-            .with_tcp(tcp::Config::default(), noise::Config::new, yamux::Config::default)?
-            .with_quic() 
+            .with_other_transport(|_| upgraded_transport)? // Годуємо білдер нашим залізобетонним транспортом
             .with_behaviour(|key| {
                 let message_authenticity = gossipsub::MessageAuthenticity::Signed(key.clone());
                 let gossipsub = gossipsub::Behaviour::new(message_authenticity, gossipsub_config).unwrap();

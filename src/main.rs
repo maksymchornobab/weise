@@ -19,16 +19,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     transport.swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
     println!("[📡 TCP ONLINE] Відкрито TCP порт для вхідних з'єднань");
 
-    transport.swarm.listen_on("/ip4/0.0.0.0/udp/0/quic-v1".parse()?)?;
-    println!("[⚡ QUIC ONLINE] Відкрито UDP порт для Hole Punching (QUIC)");
 
     let mut stdin = io::BufReader::new(io::stdin()).lines();
     let mut noise_timer = tokio::time::interval(Duration::from_secs(10));
 
 
-    let bootstrap_str = "/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2m2MXZ6896wgghvTQtR68me9saCYD689JWq2";
+    // 🔥 ГЛОБАЛЬНИЙ СЕРВЕР НА ЧИСТОМУ TCP (ПОРТ 443) ДЛЯ ОБХОДУ БЛОКУВАНЬ
+    let bootstrap_str = "/dns4/bootstrap.libp2p.io/tcp/443/p2p/QmNnooDu7bfj99oddSg1Z1Yu1v5gREeXgW36RUpw3eaYXY";
     if let Ok(bootstrap_addr) = bootstrap_str.parse::<libp2p::Multiaddr>() {
-        println!("[🌐 GLOBAL] Підключаємось до глобального TCP шлюзу для обходу NAT...");
+        println!("[🌐 HTTPS/443] Пробиваємо NAT через чистий TCP на порту 443...");
         if let Some(libp2p::multiaddr::Protocol::P2p(bootstrap_peer_id)) = bootstrap_addr.iter().last() {
             transport.swarm.behaviour_mut().kademlia.add_address(&bootstrap_peer_id, bootstrap_addr.clone());
             let _ = transport.swarm.dial(bootstrap_addr);
@@ -62,15 +61,30 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
                 
                 SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } => {
+
+                    let relay_peer_id = "QmNnooDu7bfj99oddSg1Z1Yu1v5gREeXgW36RUpw3eaYXY";
+    
+                    if peer_id.to_string() == relay_peer_id {
+                        println!("🚀 [🌐 RELAY CONNECTED] Супер! Успішно підключено до глобального транзитного сервера. Ми в мережі!");
+                    } else {
+                           println!("🤝 [CONNECTED] Встановлено з'єднання з новим піром: {}", peer_id);
+                    }
                     println!("[🤝 CONNECTED] Підключено до піра: {}", peer_id);
                     
-                    // 🔥 НАПОВНЕННЯ KADEMLIA DHT
-                    // Отримуємо від endpoint фізичну адресу, з якою було встановлено зв'язок
+
                     let remote_addr = endpoint.get_remote_address().clone();
                     
                     // Додаємо пару (PeerId, Multiaddr) в таблицю маршрутизації Kademlia
                     transport.swarm.behaviour_mut().kademlia.add_address(&peer_id, remote_addr.clone());
                     println!("[🌌 KADEMLIA] Ноду {} успішно інтегровано в таблицю DHT за адресою: {}", peer_id, remote_addr);
+                }
+
+                SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
+                    if let Some(pid) = peer_id {
+                        if pid.to_string() == "QmNnooDu7bfj99oddSg1Z1Yu1v5gREeXgW36RUpw3eaYXY" {
+                            println!("❌ [🌐 RELAY ERROR] Не вдалося з'єднатися з глобальним сервером. Причина: {:?}", error);
+                        }
+                    }
                 }
 
                 SwarmEvent::Behaviour(MyBehaviourEvent::Gossipsub(libp2p::gossipsub::Event::Message { propagation_source, message, .. })) => {
